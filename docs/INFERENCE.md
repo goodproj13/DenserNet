@@ -2,7 +2,7 @@
 
 Please download the trained model weights and PCA parameters from [Here](docs/MODEL_ZOO.md) and put them under the `pretrained_model/` directory and run:
 ```bash
-python inference.py
+bash inference.sh
 ```
 It runs inference on `sample/image.jpg` and save predicted features and top-k images under `result/`. **Note:** `sample/image.jpg` should be in the test split of the dataset.
 
