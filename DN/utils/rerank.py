@@ -1,24 +1,3 @@
-#!/usr/bin/env python2/python3
-# -*- coding: utf-8 -*-
-"""
-Source: https://github.com/zhunzhong07/person-re-ranking
-Created on Mon Jun 26 14:46:56 2017
-@author: luohao
-Modified by Houjing Huang, 2017-12-22.
-- This version accepts distance matrix instead of raw features.
-- The difference of `/` division between python 2 and 3 is handled.
-- numpy.float16 is replaced by numpy.float32 for numerical precision.
-CVPR2017 paper:Zhong Z, Zheng L, Cao D, et al. Re-ranking Person Re-identification with k-reciprocal Encoding[J]. 2017.
-url:http://openaccess.thecvf.com/content_cvpr_2017/papers/Zhong_Re-Ranking_Person_Re-Identification_CVPR_2017_paper.pdf
-Matlab version: https://github.com/zhunzhong07/person-re-ranking
-API
-q_g_dist: query-gallery distance matrix, numpy array, shape [num_query, num_gallery]
-q_q_dist: query-query distance matrix, numpy array, shape [num_query, num_query]
-g_g_dist: gallery-gallery distance matrix, numpy array, shape [num_gallery, num_gallery]
-k1, k2, lambda_value: parameters, the original paper is (k1=20, k2=6, lambda_value=0.3)
-Returns:
-  final_dist: re-ranked distance, numpy array, shape [num_query, num_gallery]
-"""
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
@@ -30,9 +9,6 @@ import gc
 
 
 def re_ranking(q_g_dist, q_q_dist, g_g_dist, k1=20, k2=6, lambda_value=0.3):
-
-    # The following naming, e.g. gallery_num, is different from outer scope.
-    # Don't care about it.
 
     original_dist = np.concatenate(
       [np.concatenate([q_q_dist, q_g_dist], axis=1),
@@ -49,7 +25,6 @@ def re_ranking(q_g_dist, q_q_dist, g_g_dist, k1=20, k2=6, lambda_value=0.3):
     all_num = gallery_num
 
     for i in range(all_num):
-        # k-reciprocal neighbors
         forward_k_neigh_index = initial_rank[i,:k1+1]
         backward_k_neigh_index = initial_rank[forward_k_neigh_index,:k1+1]
         fi = np.where(backward_k_neigh_index==i)[0]

@@ -23,7 +23,7 @@ sys.path.append(os.getcwd())
 from DN import datasets
 from DN import models
 from DN.trainers import Trainer
-from DN.evaluators import Evaluator, extract_features, pairwise_distance
+from DN.evaluators import Evaluator, feature_extraction, get_pairwise_distance
 from DN.utils.data import IterLoader, get_transformer_train, get_transformer_test
 from DN.utils.data.sampler import DistributedRandomTupleSampler, DistributedSliceSampler
 from DN.utils.data.preprocessor import Preprocessor
@@ -35,7 +35,46 @@ from DN.utils.dist_utils import init_dist, synchronize, convert_sync_bn
 
 start_epoch = best_recall5 = 0
 
-def get_data(args, iters):
+
+def update_sampler(sampler, model, loader, query, gallery, sub_set, vlad=True, gpu=None, sync_gather=False):
+    if (dist.get_rank()==0):
+        print ("===> Start extracting features for sorting gallery")
+    features = feature_extraction(model, loader, sorted(list(set(query) | set(gallery))),
+                                vlad=vlad, gpu=gpu, sync_gather=sync_gather)
+    distmat, _, _ = get_pairwise_distance(features, query, gallery)
+    del features
+    if (dist.get_rank()==0):
+        print ("===> Start sorting gallery")
+    sampler.sort_gallery(distmat, sub_set)
+    del distmat
+
+def create_model(args):
+    base_model = models.create(args.arch, log_dir="logs", branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
+    if args.vlad:
+        pool_layer = models.create('netvlad', dim=base_model.feature_dim)
+        initcache = osp.join(args.init_dir, args.arch + '_' + args.dataset + '_' + str(args.num_clusters) + '_desc_cen_%d_%d_%d.hdf5' % (args.branch_1_dim, args.branch_m_dim, args.branch_h_dim))
+        if (dist.get_rank()==0):
+            print ('Loading centroids from {}'.format(initcache))
+        with h5py.File(initcache, mode='r') as h5:
+            pool_layer.clsts = h5.get("centroids")[...]
+            pool_layer.traindescs = h5.get("descriptors")[...]
+            pool_layer._init_params()
+
+        model = models.create('embednet', base_model, pool_layer)
+    else:
+        model = base_model
+
+    if (args.syncbn):
+        # not work for VGG16
+        convert_sync_bn(model)
+
+    model.cuda(args.gpu)
+    model = nn.parallel.DistributedDataParallel(
+                model, device_ids=[args.gpu], output_device=args.gpu, find_unused_parameters=True
+            )
+    return model
+
+def create_data(args, iters):
     root = osp.join(args.data_dir, args.dataset)
     dataset = datasets.create(args.dataset, root, scale=args.scale)
 
@@ -73,49 +112,8 @@ def get_data(args, iters):
 
     return dataset, train_loader, val_loader, test_loader, sampler, train_extract_loader
 
-def update_sampler(sampler, model, loader, query, gallery, sub_set, vlad=True, gpu=None, sync_gather=False):
-    if (dist.get_rank()==0):
-        print ("===> Start extracting features for sorting gallery")
-    features = extract_features(model, loader, sorted(list(set(query) | set(gallery))),
-                                vlad=vlad, gpu=gpu, sync_gather=sync_gather)
-    distmat, _, _ = pairwise_distance(features, query, gallery)
-    del features
-    if (dist.get_rank()==0):
-        print ("===> Start sorting gallery")
-    sampler.sort_gallery(distmat, sub_set)
-    del distmat
 
-def get_model(args):
-    base_model = models.create(args.arch, log_dir="logs", branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
-    if args.vlad:
-        pool_layer = models.create('netvlad', dim=base_model.feature_dim)
-        initcache = osp.join(args.init_dir, args.arch + '_' + args.dataset + '_' + str(args.num_clusters) + '_desc_cen_%d_%d_%d.hdf5' % (args.branch_1_dim, args.branch_m_dim, args.branch_h_dim))
-        if (dist.get_rank()==0):
-            print ('Loading centroids from {}'.format(initcache))
-        with h5py.File(initcache, mode='r') as h5:
-            pool_layer.clsts = h5.get("centroids")[...]
-            pool_layer.traindescs = h5.get("descriptors")[...]
-            pool_layer._init_params()
-
-        model = models.create('embednet', base_model, pool_layer)
-    else:
-        model = base_model
-
-    if (args.syncbn):
-        # not work for VGG16
-        convert_sync_bn(model)
-
-    model.cuda(args.gpu)
-    model = nn.parallel.DistributedDataParallel(
-                model, device_ids=[args.gpu], output_device=args.gpu, find_unused_parameters=True
-            )
-    return model
-
-def main():
-    args = parser.parse_args()
-    main_worker(args)
-
-def main_worker(args):
+def train_model(args):
     global start_epoch, best_recall5
     init_dist(args.launcher, args)
     synchronize()
@@ -137,14 +135,11 @@ def main_worker(args):
         sys.stdout = Logger(osp.join(args.logs_dir, 'log.txt'))
         print("==========\nArgs:{}\n==========".format(args))
 
-    # Create data loaders
     iters = args.iters if (args.iters>0) else None
-    dataset, train_loader, val_loader, test_loader, sampler, train_extract_loader = get_data(args, iters)
+    dataset, train_loader, val_loader, test_loader, sampler, train_extract_loader = create_data(args, iters)
 
-    # Create model
-    model = get_model(args)
+    model = create_model(args)
 
-    # Load from checkpoint
     if args.resume:
         checkpoint = load_checkpoint(args.resume)
         copy_state_dict(checkpoint['state_dict'], model)
@@ -154,7 +149,6 @@ def main_worker(args):
             print("=> Start epoch {}  best recall5 {:.1%}"
                   .format(start_epoch, best_recall5))
 
-    # Evaluator
     evaluator = Evaluator(model)
     if (args.rank==0):
         print("Test the initial model:")
@@ -162,17 +156,14 @@ def main_worker(args):
                         dataset.q_val, dataset.db_val, dataset.val_pos,
                         vlad=args.vlad, gpu=args.gpu, sync_gather=args.sync_gather)
 
-    # Optimizer
     optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()),
                                 lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=0.5)
 
-    # Trainer
     trainer = Trainer(model, margin=args.margin**0.5, gpu=args.gpu)
     if ((args.cache_size<args.tuple_size) or (args.cache_size>len(dataset.q_train))):
         args.cache_size = len(dataset.q_train)
 
-    # Start training
     for epoch in range(start_epoch, args.epochs):
         sampler.set_epoch(args.seed+epoch)
         args.cache_size = args.cache_size * (2 ** (epoch // args.step_size))
@@ -211,13 +202,12 @@ def main_worker(args):
         lr_scheduler.step()
         synchronize()
 
-    # final inference
     if (args.rank==0):
         print("Performing PCA reduction on the best model:")
     model.load_state_dict(load_checkpoint(osp.join(args.logs_dir, 'model_best.pth'))['state_dict'])
     pca_parameters_path = osp.join(args.logs_dir, 'pca_params_model_best.h5')
     pca = PCA(args.features, (not args.nowhiten), pca_parameters_path)
-    dict_f = extract_features(model, train_extract_loader, sorted(list(set(dataset.q_train) | set(dataset.db_train))),
+    dict_f = feature_extraction(model, train_extract_loader, sorted(list(set(dataset.q_train) | set(dataset.db_train))),
                                 vlad=args.vlad, gpu=args.gpu, sync_gather=args.sync_gather)
     features = list(dict_f.values())
     if (len(features)>10000):
@@ -234,6 +224,11 @@ def main_worker(args):
                 vlad=args.vlad, pca=pca, gpu=args.gpu, sync_gather=args.sync_gather)
     synchronize()
     return
+
+
+def main():
+    args = parser.parse_args()
+    train_model(args)
 
 
 if __name__ == '__main__':
@@ -296,8 +291,6 @@ if __name__ == '__main__':
                         default=osp.join(working_dir, 'data'))
     parser.add_argument('--logs-dir', type=str, metavar='PATH',
                         default=osp.join(working_dir, 'logs'))
-    # parser.add_argument('--init-dir', type=str, metavar='PATH',
-    #                     default=osp.join(working_dir, '..', 'logs'))
     parser.add_argument('--init-dir', type=str, metavar='PATH',
                         default=osp.join(working_dir, 'logs'))
     main()

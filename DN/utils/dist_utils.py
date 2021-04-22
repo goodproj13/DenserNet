@@ -8,6 +8,17 @@ import torch.distributed as dist
 import torch.utils.data.distributed
 import torch.multiprocessing as mp
 
+def synchronize():
+
+    if not dist.is_available():
+        return
+    if not dist.is_initialized():
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+    dist.barrier()
+
 def init_dist(launcher, args, backend='nccl'):
     if mp.get_start_method(allow_none=True) is None:
         mp.set_start_method('spawn')
@@ -17,14 +28,6 @@ def init_dist(launcher, args, backend='nccl'):
         init_dist_slurm(args, backend)
     else:
         raise ValueError('Invalid launcher type: {}'.format(launcher))
-
-def init_dist_pytorch(args, backend="nccl"):
-    args.rank = int(os.environ['LOCAL_RANK'])
-    args.ngpus_per_node = torch.cuda.device_count()
-    args.gpu = args.rank
-    args.world_size = args.ngpus_per_node
-    torch.cuda.set_device(args.gpu)
-    dist.init_process_group(backend=backend)
 
 def init_dist_slurm(args, backend="nccl"):
     args.rank = int(os.environ['SLURM_PROCID'])
@@ -41,15 +44,14 @@ def init_dist_slurm(args, backend="nccl"):
     dist.init_process_group(backend=backend)
     args.total_gpus = dist.get_world_size()
 
-def simple_group_split(world_size, rank, num_groups):
-    groups = []
-    rank_list = np.split(np.arange(world_size), num_groups)
-    rank_list = [list(map(int, x)) for x in rank_list]
-    for i in range(num_groups):
-        groups.append(dist.new_group(rank_list[i]))
-    group_size = world_size // num_groups
-    print ("Rank no.{} start sync BN on the process group of {}".format(rank, rank_list[rank//group_size]))
-    return groups[rank//group_size]
+def init_dist_pytorch(args, backend="nccl"):
+    args.rank = int(os.environ['LOCAL_RANK'])
+    args.ngpus_per_node = torch.cuda.device_count()
+    args.gpu = args.rank
+    args.world_size = args.ngpus_per_node
+    torch.cuda.set_device(args.gpu)
+    dist.init_process_group(backend=backend)
+
 
 def convert_sync_bn(model, process_group=None, gpu=None):
     for _, (child_name, child) in enumerate(model.named_children()):
@@ -61,16 +63,13 @@ def convert_sync_bn(model, process_group=None, gpu=None):
         else:
             convert_sync_bn(child, process_group, gpu)
 
-def synchronize():
-    """
-    Helper function to synchronize (barrier) among all processes when
-    using distributed training
-    """
-    if not dist.is_available():
-        return
-    if not dist.is_initialized():
-        return
-    world_size = dist.get_world_size()
-    if world_size == 1:
-        return
-    dist.barrier()
+
+def simple_group_split(world_size, rank, num_groups):
+    groups = []
+    rank_list = np.split(np.arange(world_size), num_groups)
+    rank_list = [list(map(int, x)) for x in rank_list]
+    for i in range(num_groups):
+        groups.append(dist.new_group(rank_list[i]))
+    group_size = world_size // num_groups
+    print ("Rank no.{} start sync BN on the process group of {}".format(rank, rank_list[rank//group_size]))
+    return groups[rank//group_size]

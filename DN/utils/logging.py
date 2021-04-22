@@ -22,10 +22,10 @@ class Logger(object):
     def __exit__(self, *args):
         self.close()
 
-    def write(self, msg):
-        self.console.write(msg)
+    def close(self):
+        self.console.close()
         if self.file is not None:
-            self.file.write(msg)
+            self.file.close()
 
     def flush(self):
         self.console.flush()
@@ -33,7 +33,9 @@ class Logger(object):
             self.file.flush()
             os.fsync(self.file.fileno())
 
-    def close(self):
-        self.console.close()
+    def write(self, msg):
+        self.console.write(msg)
         if self.file is not None:
-            self.file.close()
+            self.file.write(msg)
+
+    

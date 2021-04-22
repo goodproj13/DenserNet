@@ -19,7 +19,7 @@ class VGG(nn.Module):
         16: torchvision.models.vgg16,
     }
 
-    __fix_layers = { # vgg16
+    __fix_layers = { 
         'conv5':24,
         'conv4':17,
         'conv3':10,
@@ -41,14 +41,13 @@ class VGG(nn.Module):
 
         self.feature_dim = self.branch_1_dim + self.branch_m_dim + self.branch_h_dim
         self.log_dir = log_dir
-        # Construct base (pretrained) resnet
         if depth not in VGG.__factory:
             raise KeyError("Unsupported depth:", depth)
         vgg = VGG.__factory[depth](pretrained=pretrained)
 
-        lower_branch=vgg.features[:17] ### 16,16-- 2
-        middle_branch=vgg.features[:24] ### 8,8-- 4
-        higher_branch=vgg.features ### 4,4-- 8
+        lower_branch=vgg.features[:17] 
+        middle_branch=vgg.features[:24] 
+        higher_branch=vgg.features 
 
         self.conv_1=nn.Sequential(
             lower_branch,
@@ -80,13 +79,6 @@ class VGG(nn.Module):
             for param in higher_branch.parameters():
                 param.requires_grad = False
 
-            # for param in self.conv_1.parameters():
-            #     param.requires_grad = False
-            # for param in self.conv_m.parameters():
-            #     param.requires_grad = False
-            # for param in self.conv_h.parameters():
-            #     param.requires_grad = False
-
 
     def _init_params(self):
         if (self.log_dir is not None):
@@ -97,23 +89,6 @@ class VGG(nn.Module):
 
             self.pretrained = True
 
-    def forward(self, x):
-
-        h_x = self.conv_1(x)
-        m_x = self.conv_m(x)
-        l_x = self.conv_h(x)
-
-        x = torch.cat((l_x,m_x,h_x), 1)
-
-        if self.cut_at_pooling:
-            return x
-
-        pool_x = self.gap(x)
-        pool_x = pool_x.view(pool_x.size(0), -1)
-
-        return pool_x, x
-
-        
 
     def reset_params(self):
         for m in self.modules():
@@ -131,6 +106,23 @@ class VGG(nn.Module):
                 init.normal_(m.weight, std=0.001)
                 if m.bias is not None:
                     init.constant_(m.bias, 0)
+
+    def forward(self, x):
+
+        h_x = self.conv_1(x)
+        m_x = self.conv_m(x)
+        l_x = self.conv_h(x)
+
+        x = torch.cat((l_x,m_x,h_x), 1)
+
+        if self.cut_at_pooling:
+            return x
+
+        pool_x = self.gap(x)
+        pool_x = pool_x.view(pool_x.size(0), -1)
+
+        return pool_x, x
+
 
 def vgg16(**kwargs):
     return VGG(16, **kwargs)

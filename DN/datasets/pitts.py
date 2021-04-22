@@ -8,18 +8,6 @@ from ..utils.osutils import mkdir_if_missing
 from ..utils.serialization import write_json, read_mat
 from ..utils.dist_utils import synchronize
 
-def parse_dbStruct(path):
-    matStruct = read_mat(path)
-    dbImage = [f[0].item() for f in matStruct[1]]
-    utmDb = matStruct[2].T
-    qImage = [f[0].item() for f in matStruct[3]]
-    utmQ = matStruct[4].T
-    numDb = matStruct[5].item()
-    numQ = matStruct[6].item()
-
-    dbStruct = namedtuple('dbStruct',
-            ['dbImage', 'utmDb', 'qImage', 'utmQ', 'numDb', 'numQ'])
-    return dbStruct(dbImage, utmDb, qImage, utmQ, numDb, numQ)
 
 class Pittsburgh(Dataset):
 
@@ -44,7 +32,7 @@ class Pittsburgh(Dataset):
         utms = []
         q_pids, db_pids = {}, {}
         def register(split):
-            struct = parse_dbStruct(osp.join(raw_dir, 'pitts'+self.scale+'_'+split+'.mat'))
+            struct = get_dbStruct(osp.join(raw_dir, 'pitts'+self.scale+'_'+split+'.mat'))
             q_ids = []
             for fpath, utm in zip(struct.qImage, struct.utmQ):
                 sid = fpath.split('_')[0]
@@ -75,11 +63,6 @@ class Pittsburgh(Dataset):
         q_test_pids, db_test_pids = register('test')
         assert len(identities)==len(utms)
 
-        # for pid in q_test_pids:
-        #     if (len(identities[pid])!=24):
-        #         print (identities[pid])
-
-        # Save meta information into a json file
         meta = {'name': 'Pittsburgh_'+self.scale,
                 'identities': identities, 'utm': utms}
         try:
@@ -89,9 +72,7 @@ class Pittsburgh(Dataset):
         if rank == 0:
             write_json(meta, osp.join(self.root, 'meta_'+self.scale+'.json'))
 
-        # Save the training / test split
         splits = {
-            # 'train': sorted(train_pids),
             'q_train': sorted(q_train_pids),
             'db_train': sorted(db_train_pids),
             'q_val': sorted(q_val_pids),
@@ -101,3 +82,17 @@ class Pittsburgh(Dataset):
         if rank == 0:
             write_json(splits, osp.join(self.root, 'splits_'+self.scale+'.json'))
         synchronize()
+
+
+def get_dbStruct(path):
+    matStruct = read_mat(path)
+    dbImage = [f[0].item() for f in matStruct[1]]
+    utmDb = matStruct[2].T
+    qImage = [f[0].item() for f in matStruct[3]]
+    utmQ = matStruct[4].T
+    numDb = matStruct[5].item()
+    numQ = matStruct[6].item()
+
+    dbStruct = namedtuple('dbStruct',
+            ['dbImage', 'utmDb', 'qImage', 'utmQ', 'numDb', 'numQ'])
+    return dbStruct(dbImage, utmDb, qImage, utmQ, numDb, numQ)

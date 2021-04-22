@@ -14,12 +14,6 @@ L_DIM=64  # small-model: 64; middle-model: 128; large-model: 384
 M_DIM=64  # small-model: 64; middle-model: 128; large-model: 256
 H_DIM=64  # small-model: 64; middle-model: 128; large-model: 512
 
-# if [ $# -lt 1 ]
-#   then
-#     echo "Arguments error: <MODEL PATH>"
-#     echo "Optional arguments: <DATASET (default:pitts)> <SCALE (default:250k)>"
-#     exit 1
-# fi
 
 while true # find unused tcp port
 do

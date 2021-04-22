@@ -12,7 +12,7 @@ from DN import models
 from DN import datasets
 from DN.utils.serialization import load_checkpoint, copy_state_dict
 from DN.utils.data import IterLoader, get_transformer_train, get_transformer_test
-from DN.evaluators import pairwise_distance, extract_features, spatial_nms
+from DN.evaluators import feature_extraction, spatial_nms
 from DN.utils.data.preprocessor import Preprocessor
 from DN.utils.data.sampler import DistributedSliceSampler
 from DN.utils.dist_utils import init_dist, synchronize
@@ -25,9 +25,7 @@ import os
 import numpy as np
 import os.path as osp
 
-# img_path = 'sample/image.png'
-# model_path = 'pretrained_model/model_best.pth'
-# gpu = 0
+
 recall_topk = [1, 5, 10]
 result_dir = "result"
 
@@ -35,7 +33,6 @@ def vgg16_netvlad(args, pretrained=False):
     base_model = models.create('vgg16', pretrained=False,
         branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
     pool_layer = models.create('netvlad', dim=base_model.feature_dim)
-    # model = models.create('embednetpca', base_model, pool_layer)
     model = models.create('embednet', base_model, pool_layer)
     model.cuda(args.gpu)
     model = nn.parallel.DistributedDataParallel(
@@ -47,13 +44,7 @@ def vgg16_netvlad(args, pretrained=False):
     return model
 
 
-
-def main():
-    args = parser.parse_args()
-
-    main_worker(args)
-
-def main_worker(args):
+def inference_sample(args):
     init_dist(args.launcher, args)
     synchronize()
 
@@ -69,9 +60,7 @@ def main_worker(args):
             os.system("rm -rf %s" % result_dir)
         os.mkdir(result_dir)
 
-    # print("Loading model on GPU-%d" % args.gpu)
     model =vgg16_netvlad(args, pretrained=True)
-    # read image
     img = Image.open(args.img_path).convert('RGB')
     transformer = transforms.Compose([transforms.Resize((480, 640)),
       transforms.ToTensor(),
@@ -79,9 +68,6 @@ def main_worker(args):
        std=[0.00392156862745098, 0.00392156862745098, 0.00392156862745098])])
     img = transformer(img)
     img = img.cuda(args.gpu)
-    # use GPU (optional)
-    # model = model.cuda()
-    # img = img.cuda()
 
     # extract descriptor (4096-dim)
     with torch.no_grad():
@@ -111,15 +97,13 @@ def main_worker(args):
     query = dataset.q_test
     gallery = dataset.db_test
 
-    # distmat, _, _ = pairwise_distance(features, query, gallery)
-
     test_transformer_db = get_transformer_test(480, 640)
     test_loader_db = DataLoader(
       Preprocessor(dataset.db_test, root=dataset.images_dir, transform=test_transformer_db),
       batch_size=args.test_batch_size, num_workers=args.workers,
       sampler=DistributedSliceSampler(dataset.db_test),
       shuffle=False, pin_memory=True)
-    features_db = extract_features(model, test_loader_db, gallery,
+    features_db = feature_extraction(model, test_loader_db, gallery,
       vlad=True, pca=pca, gpu=args.gpu, sync_gather=args.sync_gather)
     synchronize()
 
@@ -142,25 +126,9 @@ def main_worker(args):
         for qIx, pred in enumerate(sort_idx):
             pred = spatial_nms(pred.tolist(), db_ids, max(recall_topk)*12)
 
-            # # comput recall
-            # query_id = 
-            # correct_at_n = np.zeros(len(recall_topk))
-            # gt = dataset.test_pos
-            # for i, n in enumerate(recall_topk):
-            #     # if in top N then also in top NN, where NN > N
-            #     if np.any(np.in1d(pred[:n], gt[query_id])):
-            #         correct_at_n[i:] += 1
-            #         break
-            # recalls = correct_at_n / len(gt)
-            # print('Recall Scores:')
-            # for i, k in enumerate(recall_topk):
-            #     print('  top-{:<4}{:12.1%}'.format(k, recalls[i]))
-
-            # save images
             for i, n in enumerate(recall_topk):
                 # if in top N then also in top NN, where NN > N
                 result = np.array(gallery)[pred[:n]][:,0]
-                # print("top-%d: " % n, result)
 
                 img_save_dir = osp.join(result_dir, "top-%d" % n)
                 if not osp.exists(img_save_dir):
@@ -175,6 +143,13 @@ def main_worker(args):
         print("Saved features on CSV")
     
     synchronize()
+
+
+def main():
+    args = parser.parse_args()
+
+    inference_sample(args)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Image-based localization inference")

@@ -19,15 +19,6 @@ class Preprocessor(Dataset):
         self.root = root
         self.transform = transform
 
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, indices):
-        if isinstance(indices, (tuple, list)):
-            return [self._get_single_item(index) for index in indices]
-        else:
-            return self._get_single_item(indices)
-
     def _get_single_item(self, index):
         fname, pid, x, y = self.dataset[index]
         fpath = fname
@@ -40,3 +31,14 @@ class Preprocessor(Dataset):
             img = self.transform(img)
 
         return img, fname, pid, x, y
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, indices):
+        if isinstance(indices, (tuple, list)):
+            return [self._get_single_item(index) for index in indices]
+        else:
+            return self._get_single_item(indices)
+
+    

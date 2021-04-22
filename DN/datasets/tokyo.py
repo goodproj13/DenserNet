@@ -9,18 +9,6 @@ from ..utils.osutils import mkdir_if_missing
 from ..utils.serialization import write_json, read_mat
 from ..utils.dist_utils import synchronize
 
-def parse_dbStruct(path, time_stamp=True):
-    matStruct = read_mat(path)
-    dbImage = [f[0].item() for f in matStruct[1]]
-    utmDb = matStruct[2].T
-    qImage = [f[0].item() for f in matStruct[3+time_stamp]]
-    utmQ = matStruct[4+time_stamp].T
-    numDb = matStruct[5+time_stamp*2].item()
-    numQ = matStruct[6+time_stamp*2].item()
-
-    dbStruct = namedtuple('dbStruct',
-            ['dbImage', 'utmDb', 'qImage', 'utmQ', 'numDb', 'numQ'])
-    return dbStruct(dbImage, utmDb, qImage, utmQ, numDb, numQ)
 
 class Tokyo(Dataset):
 
@@ -46,7 +34,7 @@ class Tokyo(Dataset):
         pids = {}
         pids_ts = {}
         def register_TM(split):
-            struct = parse_dbStruct(osp.join(raw_dir, 'tokyoTM_'+split+'.mat'), True)
+            struct = get_dbStruct(osp.join(raw_dir, 'tokyoTM_'+split+'.mat'), True)
             struct_images = struct.qImage + struct.dbImage
             struct_utms = np.concatenate((struct.utmQ, struct.utmDb))
             ids = []
@@ -97,10 +85,9 @@ class Tokyo(Dataset):
         identities = new_identities
         utms = new_utms
 
-        # process tokyo247
         q_pids, db_pids = {}, {}
         def register_247(split):
-            struct = parse_dbStruct(osp.join(raw_dir, 'tokyo247.mat'), False)
+            struct = get_dbStruct(osp.join(raw_dir, 'tokyo247.mat'), False)
             q_ids = []
             for fpath, utm in zip(struct.qImage, struct.utmQ):
                 sid = str(utm[0])+'_'+str(utm[1])
@@ -136,14 +123,12 @@ class Tokyo(Dataset):
         except:
             rank = 0
 
-        # Save meta information into a json file
         meta = {'name': 'Tokyo',
                 'identities': identities,
                 'utm': utms}
         if rank == 0:
             write_json(meta, osp.join(self.root, 'meta.json'))
 
-        # Save the training / test split
         splits = {
             'q_train': sorted(train_pids),
             'db_train': sorted(train_pids),
@@ -155,3 +140,17 @@ class Tokyo(Dataset):
         if rank == 0:
             write_json(splits, osp.join(self.root, 'splits.json'))
         synchronize()
+
+
+def get_dbStruct(path, time_stamp=True):
+    matStruct = read_mat(path)
+    dbImage = [f[0].item() for f in matStruct[1]]
+    utmDb = matStruct[2].T
+    qImage = [f[0].item() for f in matStruct[3+time_stamp]]
+    utmQ = matStruct[4+time_stamp].T
+    numDb = matStruct[5+time_stamp*2].item()
+    numQ = matStruct[6+time_stamp*2].item()
+
+    dbStruct = namedtuple('dbStruct',
+            ['dbImage', 'utmDb', 'qImage', 'utmQ', 'numDb', 'numQ'])
+    return dbStruct(dbImage, utmDb, qImage, utmQ, numDb, numQ)

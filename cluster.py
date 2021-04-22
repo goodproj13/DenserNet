@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 
 from DN import datasets
 from DN import models
-from DN.evaluators import extract_features, pairwise_distance
 from DN.utils.data import get_transformer_train, get_transformer_test
 from DN.utils.data.sampler import SubsetRandomSampler
 from DN.utils.data.preprocessor import Preprocessor
@@ -24,7 +23,15 @@ from DN.utils.logging import Logger
 from DN.utils.serialization import load_checkpoint, copy_state_dict
 
 
-def get_data(args, nIm):
+def create_model(args):
+    model = models.create(args.arch, cut_at_pooling=True, log_dir="logs", 
+        branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
+    model.cuda()
+    model = nn.DataParallel(model)
+    return model
+
+
+def create_data(args, nIm):
     root = osp.join(args.data_dir, args.dataset)
     dataset = datasets.create(args.dataset, root, scale='30k')
     cluster_set = list(set(dataset.q_train) | set(dataset.db_train))
@@ -38,26 +45,8 @@ def get_data(args, nIm):
 
     return dataset, cluster_loader
 
-def get_model(args):
-    model = models.create(args.arch, cut_at_pooling=True, log_dir="logs", 
-        branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
-    model.cuda()
-    model = nn.DataParallel(model)
-    return model
 
-def main():
-    args = parser.parse_args()
-
-    if args.seed is not None:
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
-        torch.cuda.manual_seed(args.seed)
-        cudnn.deterministic = True
-
-    main_worker(args)
-
-def main_worker(args):
+def get_cluster(args):
     cudnn.benchmark = True
 
     print("==========\nArgs:{}\n==========".format(args))
@@ -66,14 +55,11 @@ def main_worker(args):
     nPerImage = 100
     nIm = math.ceil(nDescriptors/nPerImage)
 
-    # Create data loaders
-    dataset, data_loader = get_data(args, nIm)
+    dataset, data_loader = create_data(args, nIm)
 
-    # Create model
-    model = get_model(args)
+    model = create_model(args)
     encoder_dim = model.module.feature_dim
 
-	# Load from resume
     if args.resume:
         print('Loading weights from {}'.format(args.resume))
         checkpoint = load_checkpoint(args.resume)
@@ -95,12 +81,10 @@ def main_worker(args):
                 input = input.cuda()
                 image_descriptors = model(input)
                 print("image_desc before", image_descriptors.shape)
-                # normalization is IMPORTANT!
                 image_descriptors = F.normalize(image_descriptors, p=2, dim=1).view(input.size(0), encoder_dim, -1).permute(0, 2, 1)
 
                 batchix = (iteration-1)*args.batch_size*nPerImage
                 for ix in range(image_descriptors.size(0)):
-                    # sample different location for each image in batch
                     print("image_desc after", image_descriptors.shape)
                     sample = np.random.choice(image_descriptors.size(1), nPerImage, replace=False)
                     startix = batchix + ix*nPerImage
@@ -117,6 +101,20 @@ def main_worker(args):
         print('====> Storing centroids', kmeans.cluster_centers_.shape)
         h5.create_dataset('centroids', data=kmeans.cluster_centers_)
         print('====> Done!')
+
+
+def main():
+    args = parser.parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed)
+        cudnn.deterministic = True
+
+    get_cluster(args)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="VLAD centers initialization clustering")

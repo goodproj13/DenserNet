@@ -11,10 +11,10 @@ from torch.nn import Parameter
 from .osutils import mkdir_if_missing
 
 
-def read_json(fpath):
-    with open(fpath, 'r') as f:
-        obj = json.load(f)
-    return obj
+def read_mat(path, key='dbStruct'):
+    mat = loadmat(path)
+    ws = mat[key].item()
+    return ws
 
 
 def write_json(obj, fpath):
@@ -23,31 +23,11 @@ def write_json(obj, fpath):
         json.dump(obj, f, indent=4, separators=(',', ': '))
 
 
-def read_mat(path, key='dbStruct'):
-    mat = loadmat(path)
-    ws = mat[key].item()
-    return ws
-
-def save_checkpoint(state, is_best, fpath='checkpoint.pth'):
-    mkdir_if_missing(osp.dirname(fpath))
-    torch.save(state, fpath)
-    if is_best:
-        shutil.copy(fpath, osp.join(osp.dirname(fpath), 'model_best.pth'))
-
-
-def load_checkpoint(fpath):
-    if osp.isfile(fpath):
-        checkpoint = torch.load(fpath, map_location=torch.device('cpu'))
-        try:
-            rank = dist.get_rank()
-        except:
-            rank = 0
-        if (rank==0):
-            print("=> Loaded checkpoint '{}'".format(fpath))
-        return checkpoint
-    else:
-        raise ValueError("=> No checkpoint found at '{}'".format(fpath))
-
+def read_json(fpath):
+    with open(fpath, 'r') as f:
+        obj = json.load(f)
+    return obj
+    
 
 def copy_state_dict(state_dict, model, strip=None):
     tgt_state = model.state_dict()
@@ -79,3 +59,26 @@ def copy_state_dict(state_dict, model, strip=None):
         print("missing keys in state_dict:", missing)
 
     return model
+
+
+def load_checkpoint(fpath):
+    if osp.isfile(fpath):
+        checkpoint = torch.load(fpath, map_location=torch.device('cpu'))
+        try:
+            rank = dist.get_rank()
+        except:
+            rank = 0
+        if (rank==0):
+            print("=> Loaded checkpoint '{}'".format(fpath))
+        return checkpoint
+    else:
+        raise ValueError("=> No checkpoint found at '{}'".format(fpath))
+
+
+def save_checkpoint(state, is_best, fpath='checkpoint.pth'):
+    mkdir_if_missing(osp.dirname(fpath))
+    torch.save(state, fpath)
+    if is_best:
+        shutil.copy(fpath, osp.join(osp.dirname(fpath), 'model_best.pth'))
+
+

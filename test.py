@@ -16,7 +16,7 @@ import torch.utils.data.distributed as datadist
 
 from DN import datasets
 from DN import models
-from DN.evaluators import Evaluator, extract_features, pairwise_distance
+from DN.evaluators import Evaluator, feature_extraction
 from DN.utils.data import IterLoader, get_transformer_train, get_transformer_test
 from DN.utils.data.sampler import DistributedSliceSampler
 from DN.utils.data.preprocessor import Preprocessor
@@ -26,7 +26,23 @@ from DN.utils.serialization import load_checkpoint, save_checkpoint, copy_state_
 from DN.utils.dist_utils import init_dist, synchronize
 
 
-def get_data(args):
+def create_model(args):
+    base_model = models.create(args.arch,
+        branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
+    if args.vlad:
+        pool_layer = models.create('netvlad', dim=base_model.feature_dim)
+        model = models.create('embednet', base_model, pool_layer)
+    else:
+        model = base_model
+
+    model.cuda(args.gpu)
+    model = nn.parallel.DistributedDataParallel(
+                model, device_ids=[args.gpu], output_device=args.gpu, find_unused_parameters=True
+            )
+    return model
+
+
+def create_data(args):
     root = osp.join(args.data_dir, args.dataset)
     dataset = datasets.create(args.dataset, root, scale=args.scale)
 
@@ -55,27 +71,8 @@ def get_data(args):
 
     return dataset, pitts_train, train_extract_loader, test_loader_q, test_loader_db
 
-def get_model(args):
-    base_model = models.create(args.arch,
-        branch_1_dim=args.branch_1_dim, branch_m_dim=args.branch_m_dim, branch_h_dim=args.branch_h_dim)
-    if args.vlad:
-        pool_layer = models.create('netvlad', dim=base_model.feature_dim)
-        model = models.create('embednet', base_model, pool_layer)
-    else:
-        model = base_model
 
-    model.cuda(args.gpu)
-    model = nn.parallel.DistributedDataParallel(
-                model, device_ids=[args.gpu], output_device=args.gpu, find_unused_parameters=True
-            )
-    return model
-
-def main():
-    args = parser.parse_args()
-
-    main_worker(args)
-
-def main_worker(args):
+def test_model(args):
     init_dist(args.launcher, args)
     synchronize()
     cudnn.benchmark = True
@@ -88,13 +85,10 @@ def main_worker(args):
         sys.stdout = Logger(osp.join(log_dir, 'log_test_'+args.dataset+'.txt'))
         print("==========\nArgs:{}\n==========".format(args))
 
-    # Create data loaders
-    dataset, pitts_train, train_extract_loader, test_loader_q, test_loader_db = get_data(args)
+    dataset, pitts_train, train_extract_loader, test_loader_q, test_loader_db = create_data(args)
 
-    # Create model
-    model = get_model(args)
+    model = create_model(args)
 
-    # Load from checkpoint
     if args.resume:
         checkpoint = load_checkpoint(args.resume)
         copy_state_dict(checkpoint['state_dict'], model)
@@ -104,13 +98,13 @@ def main_worker(args):
             print("=> Start epoch {}  best recall5 {:.1%}"
                   .format(start_epoch, best_recall5))
 
-    # Evaluator
+
     evaluator = Evaluator(model)
     if (args.reduction):
         pca_parameters_path = osp.join(osp.dirname(args.resume), 'pca_params_'+osp.basename(args.resume).split('.')[0]+'.h5')
         pca = PCA(args.features, (not args.nowhiten), pca_parameters_path)
         if (not osp.isfile(pca_parameters_path)):
-            dict_f = extract_features(model, train_extract_loader, pitts_train,
+            dict_f = feature_extraction(model, train_extract_loader, pitts_train,
                     vlad=args.vlad, gpu=args.gpu, sync_gather=args.sync_gather)
             features = list(dict_f.values())
             if (len(features)>10000):
@@ -132,6 +126,13 @@ def main_worker(args):
                         rr_topk=args.rr_topk, lambda_value=args.lambda_value)
     synchronize()
     return
+
+
+def main():
+    args = parser.parse_args()
+
+    test_model(args)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Image-based localization testing")
