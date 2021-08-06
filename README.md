@@ -37,11 +37,12 @@ Please refer to [Here](docs/INSTALL.md#use-custom-dataset-optional) to prepare y
 
 If you find this repo useful for your research, please consider citing the paper
 ```
-@inproceedings{liu2020densernet,
-    title={DenserNet: Weakly Supervised Visual Localization Using Multi-scale Feature Aggregation},
-    author={Dongfang Liu, Yiming Cui, Liqi Yan, Christos Mousas, Baijian Yang, Yingjie Chen},
-    booktitle={AAAI}
-    year={2021},
+@article{liu2020densernet,
+  title={DenserNet: Weakly Supervised Visual Localization Using Multi-scale Feature Aggregation},
+  author={Liu, Dongfang and Cui, Yiming and Yan, Liqi and Mousas, Christos and Yang, Baijian and Chen, Yingjie},
+  journal={Proceedings of the AAAI Conference on Artificial Intelligence},
+  year={2021},
+  month={May}, pages={6101-6109} 
 }
 ```
 
